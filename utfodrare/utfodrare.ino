@@ -1,157 +1,165 @@
 #include "Stepper.h"
 
-// Stepper s = Stepper(2048, 8, 10, 9, 11);
-byte buttonUpPin = 10;
-byte buttonDownPin = 11;
-byte dirPin = 5;
-byte stepPin = 4;
-#define motorPin1 8   // IN1 on the ULN2003 driver 1
-#define motorPin2 10  // IN2 on the ULN2003 driver 1
-#define motorPin3 9   // IN3 on the ULN2003 driver 1
-#define motorPin4 11  // IN4 on the ULN2003 driver 1
+Stepper s = Stepper(2048, 8, 10, 9, 11);
+volatile int doOffset = 0;
+volatile int doStep = 0;
+volatile unsigned long nIntervalDays = 1;
+volatile unsigned long nOffsetHours = 0;
+volatile unsigned long nSecCounter = 0;
+unsigned long nStartCount = 300;
+unsigned long nStartCount2 = 0;
+volatile unsigned long nLastValCount = 0;
+volatile unsigned long nFlashCount = 1;
+volatile unsigned long nSecADay;
 
-byte sbt0811_in[4] = { 8, 9, 10, 11 };  // IN1, IN2, IN3, IN4 to arduino pins
+void runStep0() {
+  int nLRD = digitalRead(2);
+  if (nSecCounter > 20)
+    doOffset = 0;
 
-int full_steps_count = 2048;  // steps for a full cycle
-int step_time = 1;            // 1ms for one step
 
-int direction = 1;  // will be either 1 (clockwise) or -1 (anti-clockwise)
-int steps_left = full_steps_count;
-int current_step = 0;  // 0 to 7
+  if ((nLRD == LOW) && (nLastValCount > 25)) {
+    nLastValCount = 0;
 
-boolean step_positions[8][4] = {
-  { 1, 0, 0, 1 },
-  { 1, 0, 0, 0 },
-  { 1, 1, 0, 0 },
-  { 0, 1, 0, 0 },
-  { 0, 1, 1, 0 },
-  { 0, 0, 1, 0 },
-  { 0, 0, 1, 1 },
-  { 0, 0, 0, 1 },
-};
-
-void setup() {
-  for (byte i = 0; i <= 3; i++) {
-    pinMode(sbt0811_in[i], OUTPUT);
-  }
-  pinMode(5, OUTPUT);
-  pinMode(6, OUTPUT);
-  pinMode(4, INPUT_PULLUP);  // tryckknapp framkörning till 'Startläge'
-}
-/*
-void loop() {
-  while (steps_left > 0) {
-    move_stepper(1);
-    steps_left -= 1;
-  }
-  steps_left = full_steps_count;
-  direction = (direction > 0 ? -1 : 1);
-
-  delay(500);
-}
-*/
-void move_stepper(int step_count) {
-  for (int i = 0; i < step_count; i++) {
-    // step one step in given direction
-    current_step += direction;
-    if (current_step > 7) { current_step = 0; }
-    if (current_step < 0) { current_step = 7; }
-
-    // set digital pins for the current_step
-    for (byte i = 0; i <= 3; i++) {
-      digitalWrite(sbt0811_in[i], step_positions[current_step][i]);
+    if (doOffset == 1) {
+      nStartCount = 20;
+      nSecCounter = 0;
+      digitalWrite(6, HIGH);
+      ++nOffsetHours;
+      Serial.println(nOffsetHours);
+      return;
     }
 
-    // delay(step_time);
+
+    nStartCount2 = 20;
+    digitalWrite(5, HIGH);
+
+    if (nSecCounter > 5 && nIntervalDays >= 1) {
+      nSecCounter = 0;
+      nOffsetHours = 0;
+      nIntervalDays = 1;
+    } else {
+      nSecCounter = 0;
+      ++nIntervalDays;
+    }
+    Serial.println(nIntervalDays);
   }
 }
 
-
-
-/*
-void setup() {
-
-  Serial.begin(9600);
-  pinMode(13, OUTPUT);
-  pinMode(4, INPUT_PULLUP);  // tryckknapp framkörning till 'Startläge'
-                             // "if digitalRead(4) == LOW" {någon har jordat pinne 4}
-
-  pinMode(motorPin1, OUTPUT);
-  pinMode(motorPin2, OUTPUT);
-  pinMode(motorPin3, OUTPUT);
-  pinMode(motorPin4, OUTPUT);
-
-  pinMode(5, OUTPUT);  // Röd diod ('digitalWrite(5,HIGH)' tänder röd diod
-  pinMode(6, OUTPUT);  // Grön diod
-  pinMode(7, OUTPUT);  // Blå diod
-
-  digitalWrite(motorPin1, HIGH);
-
-
-
-  // s.setSpeed(2);
+void runStep1() {
+  if (digitalRead(3) == HIGH)
+    doStep = 0;
+  else
+    doStep = 1;
 }
 
-*/
-long a = 0;
-long blink = 0;
-long lastBtn = 0;
-long blinkCount = 0;
-long blinkTime = 30;
-long steps = 256;
-long stepsCount = 0;
-int diodId = 5;
+ISR(TIMER1_OVF_vect) {
+  TCNT1 = 3036;  // Timer Preloading
+  ++nSecCounter;
+
+  if (nSecCounter == 5) {
+    if (doOffset == 1)
+      nFlashCount = nOffsetHours;
+    else
+      nFlashCount = nIntervalDays;
+  }
+}
+
+// 1 sec 3 036
+void setup() {
+  // The prescaler is a 3-bit value stored in the three least significant bits of the Timer/Counter register
+  Serial.begin(9600);
+  nSecADay = (unsigned long)24 * (unsigned long)3600;
+
+  pinMode(3, INPUT_PULLUP);  // tryckknapp framkörning till 'Startläge'
+  pinMode(2, INPUT_PULLUP);  // Nollställa timer
+  // "if digitalRead(4) == LOW" {någon har jordat pinne 4}
+  //  pinMode(8, INPUT_PULLUP);  // Nollställa timer
+  pinMode(5, OUTPUT);  // Grön diod
+  pinMode(6, OUTPUT);  // Blå diod
+  pinMode(7, OUTPUT);  // Röd diod (
+
+  attachInterrupt(digitalPinToInterrupt(2), runStep0, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(3), runStep1, CHANGE);
+
+  //  attachInterrupt(digitalPinToInterrupt(3), runStep0, HIGH);
+  TCCR1A = 0;           // Init Timer1
+  TCCR1B = 0;           // Init Timer1
+  TCCR1B |= B00000100;  // Prescalar = 256
+  TCNT1 = 3036;         // Timer Preloading
+  TIMSK1 |= B00000001;  // Enable Timer Overflow Interrupt
+
+  s.setSpeed(2);
+  digitalWrite(6, HIGH);
+}
+
+
+
 void loop() {
   // put your main code here, to run repeatedly:
-  delay(10);
-  if (digitalRead(4) == LOW && lastBtn == 0) {
-    if (blink == 0) {
-      blink = 1;
-      direction = (direction > 0 ? -1 : 1);
-      stepsCount = steps;
-    } else
-      blink = 0;
-    lastBtn = 1;
-  }
 
-  if (digitalRead(4) == HIGH && lastBtn == 1) {
-    lastBtn = 0;
-  }
-
-
-
-  if (blink == 1) {
-
-
-    //if (stepsCount > 0) {
-      move_stepper(1);
-
-      --stepsCount;
-      // s.step(1);
-    // }
-
-    ++blinkCount;
-    blinkCount %= (blinkTime * 2);
-    diodId = (direction > 0 ? 5 : 6);
-    if (blinkCount > blinkTime)
-      digitalWrite(diodId, HIGH);
-    else
-      digitalWrite(diodId, LOW);
-
-  } else {
-    digitalWrite(5, LOW);
+  if (nStartCount == 1)
     digitalWrite(6, LOW);
+
+  if (nStartCount > 0) {
+    --nStartCount;
+    delay(10);
+    return;
   }
 
-  
-/*
-  digitalWrite(13, HIGH);
-  digitalWrite(5, HIGH);
-  delay(500);
-  digitalWrite(13, LOW);
-  digitalWrite(5, LOW);
-*/
+  if (nStartCount2 == 1)
+    digitalWrite(5, LOW);
+
+  if (nStartCount2 > 0)
+    --nStartCount2;
+
+  if (nFlashCount > 0) {
+    int nPin = 5;
+    if (doOffset == 1)
+      nPin = 6;
+
+    int n = digitalRead(nPin);
+    digitalWrite(nPin, !n);
+    if (n == 1)
+      --nFlashCount;
+    delay(300);
 
 
-  // s.step(2048);
+    if (nFlashCount == 0) {
+      if (doOffset == 1) {
+        Serial.println("Set Offset");
+        Serial.println(nOffsetHours);
+      }
+      if (doOffset == 0) {
+        Serial.println("Set Intervall");
+        Serial.println(nIntervalDays);
+      }
+      if (doOffset == 1) {
+        if (nOffsetHours > 0) {
+          nSecCounter = (unsigned long)3600 * (unsigned long)(24 - nOffsetHours);
+          nOffsetHours = 0;
+        }
+      }
+      if (doOffset == 0)
+        doOffset = 1;
+      else
+        doOffset = 0;
+    }
+
+    return;
+  }
+
+  if (doStep == 1) {
+    digitalWrite(7, HIGH);
+    s.step(1);
+  } else if (nSecCounter > (nSecADay * nIntervalDays)) {
+    nSecCounter = 0;
+    digitalWrite(7, HIGH);
+    Serial.println("Feed");
+    s.step(256);
+  } else {
+    digitalWrite(7, LOW);
+    ++nLastValCount;
+    delay(10);
+  }
 }
